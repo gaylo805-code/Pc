@@ -1,0 +1,189 @@
+name: Windows ZeroTier SSH (6h)
+
+on:
+  workflow_dispatch:
+
+jobs:
+  windows-6h:
+    runs-on: windows-latest
+    timeout-minutes: 360
+    
+    steps:
+      - name: ⚡ Cài đặt ZeroTier
+        run: |
+          # Tải và cài đặt ZeroTier cho Windows
+          $ztUrl = "https://download.zerotier.com/dist/ZeroTier%20One.msi"
+          $ztInstaller = "$env:TEMP\ZeroTierOne.msi"
+          Invoke-WebRequest -Uri $ztUrl -OutFile $ztInstaller
+          Start-Process msiexec.exe -Wait -ArgumentList "/i `"$ztInstaller`" /quiet /norestart"
+          
+          # Đợi service khởi động
+          Start-Sleep -Seconds 10
+          
+          # Kiểm tra version
+          & "C:\Program Files\ZeroTier\One\zerotier-cli.bat" -v
+
+      - name: 🔗 Kết nối ZeroTier
+        run: |
+          $ZT_NET = "b103a835d2b3a8b0"
+          
+          # Join network
+          & "C:\Program Files\ZeroTier\One\zerotier-cli.bat" join $ZT_NET
+          Start-Sleep -Seconds 5
+          
+          # Hiển thị Node ID
+          $nodeInfo = & "C:\Program Files\ZeroTier\One\zerotier-cli.bat" info
+          $NODE_ID = $nodeInfo.Split(' ')[2]
+          
+          Write-Host ""
+          Write-Host "╔═══════════════════════════════════════╗"
+          Write-Host "║   ZEROTIER CONNECTION INFO           ║"
+          Write-Host "╠═══════════════════════════════════════╣"
+          Write-Host "║ 📌 Network: $ZT_NET"
+          Write-Host "║ 🆔 Node ID: $NODE_ID"
+          Write-Host "║ ⚠️  VÀO my.zerotier.com ĐỂ AUTHORIZE ║"
+          Write-Host "╚═══════════════════════════════════════╝"
+          Write-Host ""
+          
+          # Đợi IP
+          Write-Host "⏳ Đợi IP ZeroTier (có thể mất 1-2 phút)..."
+          $ZT_IP_ADDR = $null
+          for ($i = 1; $i -le 60; $i++) {
+            $networkInfo = & "C:\Program Files\ZeroTier\One\zerotier-cli.bat" listnetworks 2>$null
+            if ($networkInfo -match "\d+\.\d+\.\d+\.\d+") {
+              $ZT_IP_ADDR = $matches[0]
+              Write-Host "✅ Đã nhận IP: $ZT_IP_ADDR"
+              "ZT_IP=$ZT_IP_ADDR" >> $env:GITHUB_ENV
+              break
+            }
+            Write-Host "   Đợi lần $i/60..."
+            Start-Sleep -Seconds 2
+          }
+          
+          if (-not $ZT_IP_ADDR) {
+            Write-Host "⚠️  Chưa nhận được IP, hãy chắc chắn đã authorize node!"
+            "ZT_IP=CHUA_CO_IP" >> $env:GITHUB_ENV
+          }
+
+      - name: 🔧 Cài đặt và cấu hình SSH (OpenSSH Server)
+        run: |
+          # Cài đặt OpenSSH Server
+          Add-WindowsCapability -Online -Name OpenSSH.Server~~~~0.0.1.0
+          
+          # Khởi động và cấu hình service
+          Start-Service sshd
+          Set-Service -Name sshd -StartupType 'Automatic'
+          
+          # Cấu hình firewall cho SSH
+          New-NetFirewallRule -Name 'OpenSSH-Server-In-TCP' -DisplayName 'OpenSSH Server (sshd)' -Enabled True -Direction Inbound -Protocol TCP -Action Allow -LocalPort 22
+          
+          # Cấu hình SSH
+          $sshdConfig = "C:\ProgramData\ssh\sshd_config"
+          (Get-Content $sshdConfig) -replace '#PermitRootLogin prohibit-password', 'PermitRootLogin yes' | Set-Content $sshdConfig
+          (Get-Content $sshdConfig) -replace '#PasswordAuthentication yes', 'PasswordAuthentication yes' | Set-Content $sshdConfig
+          (Get-Content $sshdConfig) -replace '#PubkeyAuthentication yes', 'PubkeyAuthentication yes' | Set-Content $sshdConfig
+          
+          # Tạo user và set password
+          $password = ConvertTo-SecureString "123456@Abc" -AsPlainText -Force
+          
+          # Kiểm tra user hiện tại
+          $currentUser = $env:USERNAME
+          Write-Host "Current user: $currentUser"
+          
+          # Set password cho user hiện tại (runneradmin)
+          net user $currentUser "123456@Abc"
+          
+          # Tạo SSH key
+          $sshDir = "$env:USERPROFILE\.ssh"
+          if (-not (Test-Path $sshDir)) {
+            New-Item -ItemType Directory -Path $sshDir -Force
+          }
+          
+          ssh-keygen -t ed25519 -f "$sshDir\id_ed25519" -N '""' -q
+          Get-Content "$sshDir\id_ed25519.pub" | Out-File -Append -Encoding ascii "$sshDir\authorized_keys"
+          
+          # Phân quyền
+          icacls $sshDir /inheritance:r
+          icacls $sshDir /grant "$($currentUser):(OI)(CI)F"
+          
+          # Restart SSH
+          Restart-Service sshd
+          
+          Write-Host "✅ SSH đã sẵn sàng"
+
+      - name: 📊 Hiển thị thông tin kết nối
+        run: |
+          $ZT_IP = $env:ZT_IP
+          $currentUser = $env:USERNAME
+          $expiryTime = (Get-Date).AddHours(6)
+          
+          Write-Host ""
+          Write-Host "╔══════════════════════════════════════════╗"
+          Write-Host "║     WINDOWS ZEROTIER SSH - 6 GIỜ       ║"
+          Write-Host "╠══════════════════════════════════════════╣"
+          Write-Host "║ 📡 ZeroTier IP : $ZT_IP"
+          Write-Host "║ 👤 Username    : $currentUser"
+          Write-Host "║ 🔑 Password    : 123456@Abc"
+          Write-Host "║ ⏰ Hết hạn     : $($expiryTime.ToString('HH:mm dd/MM/yyyy'))"
+          Write-Host "╠══════════════════════════════════════════╣"
+          Write-Host "║ 📱 SSH từ Termux:                       ║"
+          Write-Host "║   ssh $currentUser@$ZT_IP              ║"
+          Write-Host "╚══════════════════════════════════════════╝"
+          Write-Host ""
+          
+          # Hiển thị private key
+          Write-Host "============== SSH PRIVATE KEY =============="
+          Get-Content "$env:USERPROFILE\.ssh\id_ed25519"
+          Write-Host "============================================="
+          Write-Host ""
+          
+          # System info
+          Write-Host "💻 THÔNG SỐ MÁY ẢO:"
+          Write-Host "CPU    : $((Get-WmiObject Win32_ComputerSystem).NumberOfLogicalProcessors) cores"
+          $osInfo = Get-WmiObject Win32_OperatingSystem
+          $totalRAM = [math]::Round($osInfo.TotalVisibleMemorySize / 1MB, 2)
+          $freeRAM = [math]::Round($osInfo.FreePhysicalMemory / 1MB, 2)
+          Write-Host "RAM    : $totalRAM GB (Free: $freeRAM GB)"
+          Get-PSDrive C | ForEach-Object { 
+            $freeGB = [math]::Round($_.Free / 1GB, 2)
+            Write-Host "Disk C : $freeGB GB free" 
+          }
+          Write-Host ""
+
+      - name: 🔄 Keep Alive 6 Giờ
+        run: |
+          Write-Host "🚀 BẮT ĐẦU PHIÊN 6 GIỜ"
+          Write-Host "⏰ Kết thúc: $((Get-Date).AddHours(6).ToString('HH:mm:ss dd/MM/yyyy'))"
+          Write-Host ""
+          
+          # Đếm ngược 6 giờ
+          $endTime = (Get-Date).AddHours(6)
+          
+          while ((Get-Date) -lt $endTime) {
+            $remaining = $endTime - (Get-Date)
+            $hours = $remaining.Hours
+            $minutes = $remaining.Minutes
+            $seconds = $remaining.Seconds
+            
+            # Kiểm tra ZeroTier status
+            try {
+              $ztOutput = & "C:\Program Files\ZeroTier\One\zerotier-cli.bat" listnetworks 2>$null
+              if ($ztOutput -match "OK") {
+                $ztStatus = "✅"
+              } else {
+                $ztStatus = "❌"
+              }
+            } catch {
+              $ztStatus = "❌"
+            }
+            
+            # Hiển thị trạng thái
+            Write-Host "`r⏱️  Còn: $($hours.ToString('00'))h $($minutes.ToString('00'))m $($seconds.ToString('00'))s | ZT: $ztStatus | Time: $(Get-Date -Format 'HH:mm:ss') " -NoNewline
+            
+            Start-Sleep -Seconds 5
+          }
+          
+          Write-Host ""
+          Write-Host "⏰ ĐÃ HẾT 6 GIỜ!"
+          Write-Host "🔄 Chạy lại workflow để tiếp tục"
+        shell: powershell
