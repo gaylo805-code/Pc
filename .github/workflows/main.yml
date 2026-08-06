@@ -1,4 +1,4 @@
-name: Windows ZeroTier SSH (6h)
+name: Windows ZeroTier RDP (6h)
 
 on:
   workflow_dispatch:
@@ -19,16 +19,16 @@ jobs:
 
           Write-Host "Installing ZeroTier (headless)..."
           $proc = Start-Process msiexec.exe -ArgumentList "/i `"$out`" /qn /norestart ZTHEADLESS=Yes" -Wait -PassThru -NoNewWindow
-          Write-Host "Exit code: $($proc.ExitCode)"
+          Write-Host "MSI Exit code: $($proc.ExitCode)"
 
-          # Đợi service sẵn sàng
-          Start-Sleep -Seconds 8
+          Start-Sleep -Seconds 10
 
           $ztcli = "C:\Program Files (x86)\ZeroTier\One\zerotier-cli.bat"
           if (Test-Path $ztcli) {
             & $ztcli version
           } else {
-            Write-Host "zerotier-cli not found!"
+            Write-Error "zerotier-cli not found!"
+            exit 1
           }
 
       - name: 🔗 Kết nối ZeroTier
@@ -37,109 +37,103 @@ jobs:
           $ZT_NET = "b103a835d2b3a8b0"
           $ztcli = "C:\Program Files (x86)\ZeroTier\One\zerotier-cli.bat"
 
-          # Join network
           & $ztcli join $ZT_NET
           Start-Sleep -Seconds 5
 
-          # Hiển thị Node ID
           $info = & $ztcli info
           $NODE_ID = ($info -split '\s+')[2]
+
           Write-Host ""
           Write-Host "╔═══════════════════════════════════════╗"
           Write-Host "║   ZEROTIER CONNECTION INFO           ║"
           Write-Host "╠═══════════════════════════════════════╣"
-          Write-Host "║ 📌 Network: $ZT_NET"
-          Write-Host "║ 🆔 Node ID: $NODE_ID"
+          Write-Host "║ 📌 Network : $ZT_NET"
+          Write-Host "║ 🆔 Node ID : $NODE_ID"
           Write-Host "║ ⚠️  VÀO my.zerotier.com ĐỂ AUTHORIZE ║"
           Write-Host "╚═══════════════════════════════════════╝"
           Write-Host ""
 
-          # Đợi IP
           Write-Host "⏳ Đợi IP ZeroTier (có thể mất 1-2 phút)..."
           $ZT_IP_ADDR = $null
           for ($i = 1; $i -le 60; $i++) {
             $ipRaw = & $ztcli get $ZT_NET ip4 2>$null
-            if ($ipRaw -and $ipRaw -ne "-" -and $ipRaw.Trim() -ne "") {
+            if ($ipRaw -and $ipRaw.Trim() -ne "" -and $ipRaw.Trim() -ne "-") {
               $ZT_IP_ADDR = $ipRaw.Trim()
               Write-Host "✅ Đã nhận IP: $ZT_IP_ADDR"
-              echo "ZT_IP=$ZT_IP_ADDR" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
+              "ZT_IP=$ZT_IP_ADDR" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
               break
             }
             Write-Host "   Đợi lần $i/60..."
             Start-Sleep -Seconds 2
           }
 
-          if (-not $ZT_IP_ADDR -or $ZT_IP_ADDR -eq "-") {
-            Write-Host "⚠️  Chưa nhận được IP, hãy chắc chắn đã authorize node!"
-            echo "ZT_IP=CHUA_CO_IP" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
+          if (-not $ZT_IP_ADDR) {
+            Write-Host "⚠️  Chưa nhận được IP — hãy authorize node trên my.zerotier.com rồi đợi thêm"
+            "ZT_IP=CHUA_CO_IP" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
           }
 
-      - name: 🔧 Cài đặt và cấu hình SSH
+      - name: 🖥️ Bật Remote Desktop (RDP)
         shell: pwsh
         run: |
-          # Cài OpenSSH Server
-          Write-Host "Installing OpenSSH Server..."
-          Add-WindowsCapability -Online -Name OpenSSH.Server~~~~0.0.1.0 | Out-Null
+          # Lấy username thực tế
+          $username = $env:USERNAME
+          Write-Host "Current user: $username"
 
-          # Cấu hình SSH
-          $sshdConfig = "C:\ProgramData\ssh\sshd_config"
-          if (Test-Path $sshdConfig) {
-            (Get-Content $sshdConfig) `
-              -replace '#?PermitRootLogin.*', 'PermitRootLogin yes' `
-              -replace '#?PasswordAuthentication.*', 'PasswordAuthentication yes' `
-              -replace '#?PubkeyAuthentication.*', 'PubkeyAuthentication yes' |
-              Set-Content $sshdConfig -Encoding utf8
-          }
+          # Mật khẩu đủ mạnh (Windows yêu cầu complexity)
+          $password = "Runner@123456"
 
-          # Set password cho user runner
-          $password = ConvertTo-SecureString "123456" -AsPlainText -Force
-          Set-LocalUser -Name "runner" -Password $password -ErrorAction SilentlyContinue
-          # Fallback nếu Set-LocalUser không hoạt động
-          net user runner 123456
+          # Set password cho user hiện tại
+          net user $username $password
 
-          # Tạo SSH key
-          $sshDir = "$env:USERPROFILE\.ssh"
-          New-Item -ItemType Directory -Force -Path $sshDir | Out-Null
-          if (-not (Test-Path "$sshDir\id_ed25519")) {
-            ssh-keygen -t ed25519 -f "$sshDir\id_ed25519" -N '""' -q
-          }
-          Get-Content "$sshDir\id_ed25519.pub" | Add-Content "$sshDir\authorized_keys" -ErrorAction SilentlyContinue
-          icacls "$sshDir\authorized_keys" /inheritance:r /grant:r "$env:USERNAME:(R)" | Out-Null
+          # Bật Remote Desktop
+          Set-ItemProperty -Path 'HKLM:\System\CurrentControlSet\Control\Terminal Server' -Name "fDenyTSConnections" -Value 0
 
-          # Khởi động SSH
-          Start-Service sshd
-          Set-Service -Name sshd -StartupType Automatic
-          Get-Service sshd | Format-List Name, Status, StartType
-          Write-Host "✅ SSH đã sẵn sàng"
+          # Bật NLA (khuyến nghị)
+          Set-ItemProperty -Path 'HKLM:\System\CurrentControlSet\Control\Terminal Server\WinStations\RDP-Tcp' -Name "UserAuthentication" -Value 1
+
+          # Mở firewall cho RDP
+          Enable-NetFirewallRule -DisplayGroup "Remote Desktop"
+          # Dự phòng nếu rule group không có
+          New-NetFirewallRule -DisplayName "RDP-In" -Direction Inbound -Protocol TCP -LocalPort 3389 -Action Allow -ErrorAction SilentlyContinue
+
+          # Khởi động lại service Terminal Services
+          Restart-Service TermService -Force -ErrorAction SilentlyContinue
+
+          Write-Host "✅ Remote Desktop đã được bật"
+          Write-Host "Username : $username"
+          Write-Host "Password : $password"
+
+          # Lưu vào env để in ra sau
+          "RDP_USER=$username" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
+          "RDP_PASS=$password" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
 
       - name: 📊 Hiển thị thông tin kết nối
         shell: pwsh
         run: |
           Write-Host ""
-          Write-Host "╔══════════════════════════════════════════╗"
-          Write-Host "║     WINDOWS ZEROTIER SSH - 6 GIỜ       ║"
-          Write-Host "╠══════════════════════════════════════════╣"
+          Write-Host "╔══════════════════════════════════════════════╗"
+          Write-Host "║      WINDOWS ZEROTIER RDP - 6 GIỜ            ║"
+          Write-Host "╠══════════════════════════════════════════════╣"
           Write-Host "║ 📡 ZeroTier IP : ${{ env.ZT_IP }}"
-          Write-Host "║ 👤 Username    : runner"
-          Write-Host "║ 🔑 Password    : 123456"
+          Write-Host "║ 👤 Username    : ${{ env.RDP_USER }}"
+          Write-Host "║ 🔑 Password    : ${{ env.RDP_PASS }}"
+          Write-Host "║ 🔌 Port        : 3389"
           Write-Host "║ ⏰ Hết hạn     : $((Get-Date).AddHours(6).ToString('HH:mm dd/MM/yyyy'))"
-          Write-Host "╠══════════════════════════════════════════╣"
-          Write-Host "║ 📱 SSH từ Termux / bất kỳ đâu:         ║"
-          Write-Host "║   ssh runner@${{ env.ZT_IP }}           ║"
-          Write-Host "╚══════════════════════════════════════════╝"
-          Write-Host ""
-          Write-Host "============== SSH PRIVATE KEY =============="
-          Get-Content "$env:USERPROFILE\.ssh\id_ed25519" -ErrorAction SilentlyContinue
-          Write-Host "============================================="
+          Write-Host "╠══════════════════════════════════════════════╣"
+          Write-Host "║ 📱 Cách kết nối:                            ║"
+          Write-Host "║   1. Authorize node trên my.zerotier.com    ║"
+          Write-Host "║   2. Mở Remote Desktop Connection           ║"
+          Write-Host "║   3. Gõ: ${{ env.ZT_IP }}                   ║"
+          Write-Host "║   4. Login bằng username/password ở trên    ║"
+          Write-Host "╚══════════════════════════════════════════════╝"
           Write-Host ""
 
-          # System info
           Write-Host "💻 THÔNG SỐ MÁY ẢO:"
-          Write-Host "CPU    : $env:NUMBER_OF_PROCESSORS cores"
+          Write-Host "CPU  : $env:NUMBER_OF_PROCESSORS cores"
           $ram = [math]::Round((Get-CimInstance Win32_ComputerSystem).TotalPhysicalMemory / 1GB, 1)
-          Write-Host "RAM    : ${ram} GB"
+          Write-Host "RAM  : ${ram} GB"
           $disk = Get-PSDrive C
-          Write-Host "Disk   : $([math]::Round($disk.Free / 1GB, 1)) GB free"
+          Write-Host "Disk : $([math]::Round($disk.Free / 1GB, 1)) GB free"
           Write-Host ""
 
       - name: 🔄 Keep Alive 6 Giờ
@@ -154,9 +148,9 @@ jobs:
 
           while ((Get-Date) -lt $endTime) {
             $remaining = $endTime - (Get-Date)
-            $hours = [int]$remaining.TotalHours
-            $minutes = $remaining.Minutes
-            $seconds = $remaining.Seconds
+            $h = [int]$remaining.TotalHours
+            $m = $remaining.Minutes
+            $s = $remaining.Seconds
 
             $ztStatus = "❌"
             try {
@@ -164,8 +158,7 @@ jobs:
               if ($nets -match "OK") { $ztStatus = "✅" }
             } catch {}
 
-            Write-Host ("`r⏱️  Còn: {0:D2}h {1:D2}m {2:D2}s | ZT: {3} | Time: {4} " -f $hours, $minutes, $seconds, $ztStatus, (Get-Date -Format 'HH:mm:ss')) -NoNewline
-
+            Write-Host ("`r⏱️  Còn: {0:D2}h {1:D2}m {2:D2}s | ZT: {3} | {4}" -f $h, $m, $s, $ztStatus, (Get-Date -Format 'HH:mm:ss')) -NoNewline
             Start-Sleep -Seconds 5
           }
 
