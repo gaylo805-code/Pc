@@ -75,35 +75,28 @@ jobs:
       - name: 🖥️ Bật Remote Desktop (RDP)
         shell: pwsh
         run: |
-          # Lấy username thực tế
           $username = $env:USERNAME
           Write-Host "Current user: $username"
 
-          # Mật khẩu đủ mạnh (Windows yêu cầu complexity)
           $password = "Runner@123456"
 
-          # Set password cho user hiện tại
+          # Set password
           net user $username $password
 
           # Bật Remote Desktop
           Set-ItemProperty -Path 'HKLM:\System\CurrentControlSet\Control\Terminal Server' -Name "fDenyTSConnections" -Value 0
-
-          # Bật NLA (khuyến nghị)
           Set-ItemProperty -Path 'HKLM:\System\CurrentControlSet\Control\Terminal Server\WinStations\RDP-Tcp' -Name "UserAuthentication" -Value 1
 
-          # Mở firewall cho RDP
-          Enable-NetFirewallRule -DisplayGroup "Remote Desktop"
-          # Dự phòng nếu rule group không có
+          # Mở firewall
+          Enable-NetFirewallRule -DisplayGroup "Remote Desktop" -ErrorAction SilentlyContinue
           New-NetFirewallRule -DisplayName "RDP-In" -Direction Inbound -Protocol TCP -LocalPort 3389 -Action Allow -ErrorAction SilentlyContinue
 
-          # Khởi động lại service Terminal Services
           Restart-Service TermService -Force -ErrorAction SilentlyContinue
 
           Write-Host "✅ Remote Desktop đã được bật"
           Write-Host "Username : $username"
           Write-Host "Password : $password"
 
-          # Lưu vào env để in ra sau
           "RDP_USER=$username" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
           "RDP_PASS=$password" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
 
@@ -141,16 +134,16 @@ jobs:
         run: |
           Write-Host "🚀 BẮT ĐẦU PHIÊN 6 GIỜ"
           $endTime = (Get-Date).AddHours(6)
-          Write-Host "⏰ Kết thúc: $($endTime.ToString('HH:mm:ss dd/MM/yyyy'))"
+          Write-Host "⏰ Kết thúc lúc: $($endTime.ToString('HH:mm:ss dd/MM/yyyy'))"
           Write-Host ""
 
           $ztcli = "C:\Program Files (x86)\ZeroTier\One\zerotier-cli.bat"
+          $count = 0
 
           while ((Get-Date) -lt $endTime) {
             $remaining = $endTime - (Get-Date)
-            $h = [int]$remaining.TotalHours
+            $h = [math]::Floor($remaining.TotalHours)
             $m = $remaining.Minutes
-            $s = $remaining.Seconds
 
             $ztStatus = "❌"
             try {
@@ -158,8 +151,11 @@ jobs:
               if ($nets -match "OK") { $ztStatus = "✅" }
             } catch {}
 
-            Write-Host ("`r⏱️  Còn: {0:D2}h {1:D2}m {2:D2}s | ZT: {3} | {4}" -f $h, $m, $s, $ztStatus, (Get-Date -Format 'HH:mm:ss')) -NoNewline
-            Start-Sleep -Seconds 5
+            $count++
+            Write-Host "[$count] Còn $h giờ $m phút | ZeroTier: $ztStatus | $(Get-Date -Format 'HH:mm:ss')"
+
+            # Ngủ 2 phút mỗi lần (ổn định, chạy đủ 6 tiếng)
+            Start-Sleep -Seconds 120
           }
 
           Write-Host ""
