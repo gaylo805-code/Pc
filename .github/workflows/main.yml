@@ -53,7 +53,7 @@ jobs:
           Write-Host "╚═══════════════════════════════════════╝"
           Write-Host ""
 
-          Write-Host "⏳ Đợi IP ZeroTier (có thể mất 1-2 phút)..."
+          Write-Host "⏳ Đợi IP ZeroTier (tối đa 120 giây)..."
           $ZT_IP_ADDR = $null
           for ($i = 1; $i -le 60; $i++) {
             $ipRaw = & $ztcli get $ZT_NET ip4 2>$null
@@ -111,7 +111,7 @@ jobs:
           Write-Host "║ 👤 Username    : ${{ env.RDP_USER }}"
           Write-Host "║ 🔑 Password    : ${{ env.RDP_PASS }}"
           Write-Host "║ 🔌 Port        : 3389"
-          Write-Host "║ ⏰ Hết hạn     : $((Get-Date).AddHours(6).ToString('HH:mm dd/MM/yyyy'))"
+          Write-Host "║ ⏰ Tổng thời gian: 21600 giây (6 tiếng)     ║"
           Write-Host "╠══════════════════════════════════════════════╣"
           Write-Host "║ 📱 Cách kết nối:                            ║"
           Write-Host "║   1. Authorize node trên my.zerotier.com    ║"
@@ -129,21 +129,26 @@ jobs:
           Write-Host "Disk : $([math]::Round($disk.Free / 1GB, 1)) GB free"
           Write-Host ""
 
-      - name: 🔄 Keep Alive 6 Giờ
+      - name: 🔄 Keep Alive Chống Timeout (21600s)
         shell: pwsh
         run: |
-          Write-Host "🚀 BẮT ĐẦU PHIÊN 6 GIỜ"
-          $endTime = (Get-Date).AddHours(6)
-          Write-Host "⏰ Kết thúc lúc: $($endTime.ToString('HH:mm:ss dd/MM/yyyy'))"
+          Write-Host "🚀 BẮT ĐẦU ĐẾM NGƯỢC 21600 GIÂY (6 TIẾNG)"
+          
+          $totalSeconds = 21600
+          $startTime = Get-Date
+          $endTime = $startTime.AddSeconds($totalSeconds)
+          
+          Write-Host "⏰ Thời gian kết thúc: $($endTime.ToString('HH:mm:ss dd/MM/yyyy'))"
           Write-Host ""
 
           $ztcli = "C:\Program Files (x86)\ZeroTier\One\zerotier-cli.bat"
-          $count = 0
+          $counter = 0
 
           while ((Get-Date) -lt $endTime) {
-            $remaining = $endTime - (Get-Date)
-            $h = [math]::Floor($remaining.TotalHours)
-            $m = $remaining.Minutes
+            $currentSpan = $endTime - (Get-Date)
+            $remainingSeconds = [math]::Floor($currentSpan.TotalSeconds)
+            
+            if ($remainingSeconds -le 0) { break }
 
             $ztStatus = "❌"
             try {
@@ -151,13 +156,13 @@ jobs:
               if ($nets -match "OK") { $ztStatus = "✅" }
             } catch {}
 
-            $count++
-            Write-Host "[$count] Còn $h giờ $m phút | ZeroTier: $ztStatus | $(Get-Date -Format 'HH:mm:ss')"
+            $counter++
+            Write-Host "[$counter] ⏳ Còn lại: $remainingSeconds giây | ZeroTier: $ztStatus | Lúc: $(Get-Date -Format 'HH:mm:ss')"
 
-            # Ngủ 2 phút mỗi lần (ổn định, chạy đủ 6 tiếng)
-            Start-Sleep -Seconds 120
+            # Nghỉ 30 giây mỗi lần để chống timeout log của GitHub Actions
+            Start-Sleep -Seconds 30
           }
 
           Write-Host ""
-          Write-Host "⏰ ĐÃ HẾT 6 GIỜ!"
-          Write-Host "🔄 Chạy lại workflow để tiếp tục"
+          Write-Host "⏰ ĐÃ HOÀN TẤT 21600 GIÂY (6 TIẾNG)!"
+          
