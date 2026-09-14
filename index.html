@@ -285,7 +285,8 @@ function render(d){
   renderSteps(node, net, user, pass, port, d.run_status);
 
   if(ip) badge('live','RUNNING');
-  else if(run) badge('wait','CHỜ AUTHORIZE');
+  else if(run && d.run_status==='in_progress') badge('wait','CHỜ AUTHORIZE');
+  else if(run) badge('', 'ĐÃ KẾT THÚC');
   else badge('', 'KHÔNG CÓ MÁY');
 }
 function renderSteps(node, net, user, pass, port, status){

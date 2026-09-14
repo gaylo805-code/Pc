@@ -11,6 +11,7 @@ Multi-account:
 import io
 import json
 import os
+import re
 import sys
 import subprocess
 import urllib.request
@@ -26,7 +27,7 @@ API = "https://api.github.com"
 TYPES = {
     "windows": {
         "repo_name": "Pc", "branch": "main", "workflow": "main.yml",
-        "label": "Windows 2022", "icon": "🖥️", "slot": "windows",
+        "label": "Windows 2022", "icon": "🖥️", "slot": "rdp",
     },
     "ubuntu": {
         "repo_name": "Cc", "branch": "main", "workflow": "main.yml",
@@ -34,6 +35,13 @@ TYPES = {
     },
 }
 DEFAULT_TYPE = "windows"
+
+# Thứ tự ưu tiên tìm IP trong log của workflow
+_IP_PATTERNS = (
+    r"Đã nhận IP[:：]*\s*(\d{1,3}(?:\.\d{1,3}){3})",
+    r"ZeroTier IP[\s:：]*(\d{1,3}(?:\.\d{1,3}){3})",
+    r"IP[:：]\s*(\d{1,3}(?:\.\d{1,3}){3})",
+)
 
 
 def _load_accounts():
@@ -157,107 +165,61 @@ def live_info(cfg, acc):
         return None
 
 
-# --- Scan mạng ZeroTier ngay trên máy Ubuntu này để tìm IP thật của máy ---
-import ipaddress as _ipaddr
-import socket as _socket
-import time as _time
-from concurrent.futures import ThreadPoolExecutor as _TPE
-
-_SCAN = {"t": 0, "data": None}
-
-
-def _zt_prefix():
-    out = ""
-    for cmd in (["zerotier-cli", "listnetworks"], ["sudo", "zerotier-cli", "listnetworks"]):
+def run_logs(run_id, cfg, acc):
+    """Tải toàn bộ log của run — trong log workflow in sẵn IP ZeroTier."""
+    st, jobs = gh("GET", f"/repos/{acc_repo(cfg, acc)}/actions/runs/{run_id}/jobs?per_page=50", token=acc_token(acc))
+    if st != 200:
+        return ""
+    for j in jobs.get("jobs", []):
+        url = f"{API}/repos/{acc_repo(cfg, acc)}/actions/jobs/{j['id']}/logs"
+        cmd = ["curl", "-sL", "-m", "120", "-H", "Authorization: Bearer " + acc_token(acc), url]
         try:
-            out = subprocess.run(cmd, capture_output=True, text=True, timeout=10).stdout
-            if out.strip():
-                break
+            p = subprocess.run(cmd, capture_output=True, timeout=130)
         except Exception:
-            out = ""
-    for ln in out.strip().splitlines()[1:]:
-        parts = ln.split()
-        if len(parts) >= 9 and parts[-1].count(".") == 3:
-            return parts[-1]
+            continue
+        if p.returncode == 0 and p.stdout:
+            return p.stdout.decode("utf-8", "ignore")
+    return ""
+
+
+def ip_from_log(text):
+    if not text:
+        return None
+    for pat in _IP_PATTERNS:
+        m = re.search(pat, text)
+        if m:
+            return m.group(1)
     return None
-
-
-def _ping(ip):
-    try:
-        return subprocess.run(["ping", "-c1", "-W1", ip], capture_output=True, timeout=3).returncode == 0
-    except Exception:
-        return False
-
-
-def _port(ip, port):
-    try:
-        with _socket.create_connection((ip, port), timeout=1.2):
-            return True
-    except Exception:
-        return False
-
-
-def zt_scan(ttl=20):
-    now = _time.time()
-    if _SCAN["data"] and now - _SCAN["t"] < ttl:
-        return _SCAN["data"]
-    prefix = _zt_prefix()
-    result = {"prefix": prefix, "hosts": [], "windows": [], "ssh": []}
-    mine = set()
-    try:
-        out = subprocess.run(["hostname", "-I"], capture_output=True, text=True, timeout=5).stdout
-        mine.update(out.split())
-    except Exception:
-        pass
-    if prefix:
-        mine.add(prefix.split("/")[0])
-    if prefix:
-        try:
-            net = _ipaddr.ip_network(prefix, strict=False)
-            hosts = [str(h) for h in net.hosts() if str(h) not in mine]
-            with _TPE(max_workers=120) as ex:
-                ok = list(ex.map(_ping, hosts))
-            up = [h for h, alive in zip(hosts, ok) if alive]
-            with _TPE(max_workers=40) as ex:
-                rdp = list(ex.map(lambda ip: _port(ip, 3389), up))
-                ssh = list(ex.map(lambda ip: _port(ip, 22), up))
-            result["hosts"] = up
-            result["windows"] = [h for h, is_rdp in zip(up, rdp) if is_rdp]
-            result["ssh"] = [h for h, is_ssh in zip(up, ssh) if is_ssh]
-        except Exception:
-            pass
-    result["scan_at"] = _time.strftime("%H:%M:%S")
-    _SCAN["t"] = now
-    _SCAN["data"] = result
-    return result
 
 
 def gather(t=None, run_id=None, acc=None):
     t = t if t in TYPES else DEFAULT_TYPE
-    acc = acc if a_name_exists(acc) else DEFAULT_ACC
+    acc = acc if any(a["name"] == acc for a in ACCOUNTS) else DEFAULT_ACC
     cfg = TYPES[t]
     rid, r = latest_run(cfg, acc)
     run_id = run_id or rid
-    active = r is not None and r["status"] in ("in_progress", "queued")
+    active = r is not None and r["status"] == "in_progress"
     artifact = connect_info(run_id, cfg, acc) if active and run_id else None
     live = live_info(cfg, acc) if active else None
     info = (live if live else artifact) or {}
     info = dict(info)
 
-    scan = zt_scan()
-    slot = cfg["slot"]
-    if scan.get(slot):
-        cand = scan[slot][0]
-        if not info.get("zt_ip"):
-            info["zt_ip"] = cand
-        info["discovered_by"] = "scan"
+    log = run_logs(run_id, cfg, acc) if active and run_id else ""
+    real_ip = info.get("zt_ip") or ""
+    log_found = ip_from_log(log)
+    if log_found:
+        real_ip = log_found
+    info["zt_ip"] = real_ip
+    info["discovered_by"] = "log" if real_ip else (info.get("discovered_by") or "artifact")
 
     repo = acc_repo(cfg, acc)
     run_url = f"https://github.com/{repo}/actions/runs/{run_id}" if run_id else None
+    if not active:
+        info = None
     return {
         "type": t,
         "account": acc,
-        "cfg": {"repo": repo, "label": cfg["label"], "icon": cfg["icon"], "slot": slot},
+        "cfg": {"repo": repo, "label": cfg["label"], "icon": cfg["icon"], "slot": cfg["slot"]},
         "run_id": run_id,
         "run_url": run_url,
         "run_status": r["status"] if r else None,
@@ -265,12 +227,7 @@ def gather(t=None, run_id=None, acc=None):
         "info": info or None,
         "artifact_found": artifact is not None,
         "live_found": live is not None,
-        "scan": scan,
     }
-
-
-def a_name_exists(acc):
-    return any(a["name"] == acc for a in ACCOUNTS)
 
 
 class Handler(BaseHTTPRequestHandler):
@@ -344,7 +301,7 @@ class Handler(BaseHTTPRequestHandler):
                 body = {}
             t = body.get("type", DEFAULT_TYPE)
             acc = body.get("account")
-            if not acc or not a_name_exists(acc):
+            if not acc or not any(a["name"] == acc for a in ACCOUNTS):
                 self._json({"ok": False, "message": "Tài khoản không hợp lệ"}, 400)
                 return
             cfg = TYPES.get(t)
