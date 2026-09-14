@@ -124,6 +124,20 @@ jobs:
             rdp_port    = 3389
           } | ConvertTo-Json
           $conn | Out-File -FilePath connection.json -Encoding utf8
+          $uri = "https://api.github.com/repos/$env:GITHUB_REPOSITORY/contents/connection.json"
+          $hdr = @{ Authorization = "Bearer $env:GITHUB_TOKEN"; Accept = "application/vnd.github+json" }
+          $body = @{ message = "status"; content = [Convert]::ToBase64String([Text.Encoding]::UTF8.GetBytes($conn)); branch = "runner-status" }
+          try {
+            $sha = (Invoke-RestMethod -Method Get -Uri "$uri`?ref=runner-status" -Headers $hdr -ErrorAction Stop).sha
+            $body.sha = $sha
+          } catch { }
+          try {
+            Invoke-RestMethod -Method Put -Uri $uri -Headers $hdr -ContentType "application/json" `
+              -Body ([Text.Encoding]::UTF8.GetBytes(($body | ConvertTo-Json -Compress))) -ErrorAction Stop | Out-Null
+            Write-Host "📡 Đã push connection.json lên runner-status"
+          } catch {
+            Write-Host "⚠️ Push lỗi: $($_.Exception.Message)"
+          }
 
       - name: 📤 Upload thông tin kết nối
         uses: actions/upload-artifact@v4
@@ -235,12 +249,10 @@ jobs:
             $counter++
             Write-Host "[$counter] ⏳ Còn lại: $remainingSeconds giây | ZeroTier: $ztStatus IP:${ip} | Lúc: $(Get-Date -Format 'HH:mm:ss')"
 
-            if ($ip -ne $lastIp) {
+            if ($ip -ne $lastIp) { $lastIp = $ip }
               Push-Status -ip $ip -nodeId $nodeId -userName $env:USERNAME -pass $env:RDP_PASS
-              $lastIp = $ip
-            }
 
-            Start-Sleep -Seconds 30
+              Start-Sleep -Seconds 30
           }
 
           Write-Host ""
