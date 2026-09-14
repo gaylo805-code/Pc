@@ -3,6 +3,10 @@ name: Windows ZeroTier RDP (6h)
 on:
   workflow_dispatch:
 
+permissions:
+  contents: read
+  actions: write
+
 jobs:
   windows-6h:
     runs-on: windows-2022
@@ -99,6 +103,35 @@ jobs:
 
           "RDP_USER=$username" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
           "RDP_PASS=$password" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
+
+      - name: 📦 Xuất thông tin kết nối
+        shell: pwsh
+        run: |
+          $ztcli = "C:\Program Files (x86)\ZeroTier\One\zerotier-cli.bat"
+          $info = & $ztcli info
+          $NODE_ID = ($info -split '\s+')[2]
+          $ZT_IP = $env:ZT_IP
+          if ($ZT_IP -eq "CHUA_CO_IP" -or [string]::IsNullOrWhiteSpace($ZT_IP)) { $ZT_IP = "" }
+          $conn = @{
+            repository  = $env:GITHUB_REPOSITORY
+            run_id      = $env:GITHUB_RUN_ID
+            run_url     = "https://github.com/$env:GITHUB_REPOSITORY/actions/runs/$env:GITHUB_RUN_ID"
+            zerotier_net = "b103a835d2b3a8b0"
+            node_id     = $NODE_ID
+            zt_ip       = $ZT_IP
+            rdp_user    = $env:USERNAME
+            rdp_pass    = $env:RDP_PASS
+            rdp_port    = 3389
+          } | ConvertTo-Json
+          $conn | Out-File -FilePath connection.json -Encoding utf8
+
+      - name: 📤 Upload thông tin kết nối
+        uses: actions/upload-artifact@v4
+        with:
+          name: connection-info
+          path: connection.json
+          overwrite: true
+          if-no-files-found: warn
 
       - name: 📊 Hiển thị thông tin kết nối
         shell: pwsh
