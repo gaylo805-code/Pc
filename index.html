@@ -1,0 +1,427 @@
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Cloud Console - VM instances</title>
+<style>
+  :root {
+    --blue: #1a73e8;
+    --blue-h: #1967d2;
+    --green: #1e8e3e;
+    --amber: #e8710a;
+    --red: #d93025;
+    --gray-100: #f8f9fa;
+    --gray-200: #f1f3f4;
+    --gray-300: #e8eaed;
+    --gray-400: #dadce0;
+    --gray-600: #5f6368;
+    --gray-800: #3c4043;
+    --gray-900: #202124;
+  }
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body { font-family: "Google Sans", Roboto, "Segoe UI", Arial, sans-serif; background: var(--gray-100); color: var(--gray-800); }
+
+  /* ===== Top bar ===== */
+  .topbar {
+    height: 56px; background: #fff; border-bottom: 1px solid var(--gray-300);
+    display: flex; align-items: center; padding: 0 16px; position: sticky; top: 0; z-index: 100;
+  }
+  .hamburger { width: 44px; height: 44px; display: flex; align-items: center; justify-content: center; border-radius: 50%; cursor: pointer; color: var(--gray-600); }
+  .hamburger:hover { background: var(--gray-200); }
+  .cloud-logo { display: flex; align-items: center; gap: 10px; margin-right: 20px; user-select: none; }
+  .cloud-logo .gb6 { font-size: 22px; font-weight: 700; font-family: Arial; background: linear-gradient(0deg, transparent 0, transparent 5px); }
+  .cloud-logo .gb6 span:nth-child(1){color:#4285f4}.cloud-logo .gb6 span:nth-child(2){color:#ea4335}
+  .cloud-logo .gb6 span:nth-child(3){color:#fbbc05}.cloud-logo .gb6 span:nth-child(4){color:#4285f4}
+  .cloud-logo .gb6 span:nth-child(5){color:#34a853}.cloud-logo .gb6 span:nth-child(6){color:#ea4335}
+  .cloud-logo .txt { display: flex; flex-direction: column; }
+  .cloud-logo .txt b { font-size: 14px; font-weight: 500; color: var(--gray-800); letter-spacing: .2px; }
+  .cloud-logo .txt small { font-size: 11px; color: var(--gray-600); }
+  .project {
+    display: flex; align-items: center; gap: 8px; background: var(--gray-100);
+    border: 1px solid var(--gray-400); border-radius: 999px; padding: 7px 14px;
+    font-size: 13px; color: var(--gray-800); cursor: pointer;
+  }
+  .project:hover { background: var(--gray-200); }
+  .project .arrow { font-size: 10px; color: var(--gray-600); }
+  .search {
+    margin-left: 24px; flex: 1; max-width: 420px;
+    display: flex; align-items: center; gap: 10px;
+    background: var(--gray-100); border: 1px solid transparent; border-radius: 8px;
+    padding: 8px 12px; color: var(--gray-600); font-size: 13px;
+  }
+  .search:hover { background: var(--gray-200); }
+  .top-right { margin-left: auto; display: flex; align-items: center; gap: 6px; color: var(--gray-600); }
+  .icon-btn { width: 40px; height: 40px; display: flex; align-items: center; justify-content: center; border-radius: 50%; cursor: pointer; position: relative; }
+  .icon-btn:hover { background: var(--gray-200); }
+  .dot::after {
+    content: ""; position: absolute; top: 8px; right: 8px;
+    width: 7px; height: 7px; background: var(--red); border-radius: 50%;
+    border: 2px solid #fff;
+  }
+  .avatar {
+    width: 36px; height: 36px; border-radius: 50%;
+    background: linear-gradient(135deg,#4285f4,#34a853); color:#fff;
+    display: flex; align-items: center; justify-content: center; font-size: 15px; font-weight: 600;
+    cursor: pointer; margin-left: 6px;
+  }
+  .avatar:hover { opacity: .9; }
+
+  /* ===== Layout ===== */
+  .layout { display: flex; min-height: calc(100vh - 56px); }
+  .sidenav {
+    width: 232px; background: #fff; border-right: 1px solid var(--gray-300);
+    padding: 12px 8px 40px; overflow-y: auto; flex-shrink: 0;
+  }
+  .sidenav .sec { font-size: 11px; color: var(--gray-600); letter-spacing: .6px; padding: 14px 14px 6px; }
+  .sidenav a {
+    display: flex; align-items: center; gap: 14px; padding: 11px 14px;
+    color: var(--gray-800); text-decoration: none; font-size: 14px; border-radius: 99px;
+  }
+  .sidenav a .ic { width: 20px; text-align: center; color: var(--gray-600); opacity: .8; }
+  .sidenav a:hover { background: var(--gray-200); }
+  .sidenav a.active { background: var(--gray-200); color: var(--blue); font-weight: 500; }
+  .sidenav a.active .ic { color: var(--blue); opacity: 1; }
+
+  .content { flex: 1; padding: 24px; min-width: 0; }
+  .crumb { font-size: 13px; color: var(--gray-600); margin-bottom: 18px; }
+  .crumb b { color: var(--gray-800); font-weight: 500; }
+
+  .head { display: flex; align-items: center; gap: 14px; margin-bottom: 8px; }
+  .head h1 { font-size: 22px; font-weight: 400; color: var(--gray-800); }
+  .head .actions { margin-left: auto; display: flex; gap: 8px; }
+  .btn {
+    border-radius: 8px; padding: 9px 16px; font-size: 14px; font-weight: 500;
+    display: inline-flex; align-items: center; gap: 8px; cursor: pointer;
+    border: 1px solid var(--gray-400); background: #fff; color: var(--gray-800);
+  }
+  .btn:hover { background: var(--gray-200); }
+  .btn.primary { background: var(--blue); color: #fff; border-color: var(--blue); }
+  .btn.primary:hover { background: var(--blue-h); border-color: var(--blue-h); }
+  .btn.primary:disabled { opacity: .6; cursor: not-allowed; }
+  .btn.sm { padding: 6px 12px; font-size: 13px; }
+
+  .banner {
+    display: flex; align-items: center; gap: 12px;
+    background: #e8f0fe; border: 1px solid #c7dbff; color: #185abc;
+    border-radius: 8px; padding: 12px 16px; font-size: 13px; margin-bottom: 18px;
+  }
+  .banner .x { margin-left: auto; cursor: pointer; opacity: .7; }
+
+  .panel {
+    background: #fff; border: 1px solid var(--gray-400); border-radius: 4px;
+    margin-bottom: 20px; overflow: hidden;
+  }
+  .panel .phead {
+    display: flex; align-items: center; gap: 10px;
+    padding: 12px 16px; border-bottom: 1px solid var(--gray-300);
+    font-size: 14px; font-weight: 500; color: var(--gray-800);
+  }
+  .panel .ptools { margin-left: auto; display: flex; gap: 8px; }
+
+  table { width: 100%; border-collapse: collapse; font-size: 13px; }
+  th {
+    text-align: left; padding: 10px 16px; background: var(--gray-100);
+    color: var(--gray-600); font-weight: 500; border-bottom: 1px solid var(--gray-300);
+    font-size: 12px;
+  }
+  td { padding: 12px 16px; border-bottom: 1px solid var(--gray-300); vertical-align: middle; }
+  tr.row:hover td { background: var(--gray-100); }
+  .vmname { color: var(--blue); font-family: inherit; cursor: pointer; }
+  .vmname:hover { text-decoration: underline; }
+  .apps { color: var(--gray-600); }
+  .app {
+    display: inline-flex; align-items: center; gap: 6px;
+    background: var(--gray-100); border: 1px solid var(--gray-400);
+    border-radius: 999px; padding: 3px 10px; font-size: 12px; color: var(--gray-800);
+    cursor: pointer;
+  }
+  .app:hover { background: var(--gray-200); }
+
+  .status-pill { display: inline-flex; align-items: center; gap: 7px; font-size: 13px; }
+  .status-pill .bub { width: 9px; height: 9px; border-radius: 50%; }
+  .status-pill.running .bub { background: var(--green); box-shadow: 0 0 0 3px rgba(30,142,62,.15); }
+  .status-pill.wait .bub { background: var(--amber); box-shadow: 0 0 0 3px rgba(232,113,10,.15); }
+  .status-pill small { color: var(--gray-600); }
+
+  .chip { font-size: 12px; background: var(--gray-100); border: 1px solid var(--gray-400); border-radius: 4px; padding: 2px 8px; color: var(--gray-600); }
+  .num { font-family: Google Sans, Roboto, monospace; }
+
+  /* instance detail */
+  .det-grid { display: grid; grid-template-columns: 240px 1fr; padding: 16px; font-size: 13px; }
+  .det-grid .key { color: var(--gray-600); padding: 7px 12px; }
+  .det-grid .valx { padding: 7px 12px; word-break: break-all; }
+  .netif { border: 1px solid var(--gray-300); border-radius: 4px; margin-top: 6px; }
+  .netif .ni-h { background: var(--gray-100); padding: 8px 12px; font-weight: 500; display: flex; align-items: center; gap: 8px; }
+  .netif .ni-b { padding: 10px 12px; display: grid; grid-template-columns: 130px 1fr; gap: 8px 12px; }
+  .netif .ni-b b { color: var(--gray-600); font-weight: 500; }
+  .mono { font-family: Consolas, "Roboto Mono", monospace; font-size: 13px; color: var(--gray-800); }
+  .hint { color: var(--gray-600); font-size: 12px; margin-top: 6px; line-height: 1.7; }
+
+  #toast {
+    position: fixed; bottom: 24px; left: 50%; transform: translateX(-50%);
+    background: #323232; color: #fff; border-radius: 8px; padding: 12px 20px;
+    font-size: 14px; display: none; z-index: 999; box-shadow: 0 4px 20px rgba(0,0,0,.3);
+    max-width: 90vw;
+  }
+  #toast.show { display: block; animation: rise .25s ease; }
+  @keyframes rise { from { opacity: 0; transform: translate(-50%, 12px); } }
+  .spinner {
+    display: inline-block; width: 14px; height: 14px; border-radius: 50%;
+    border: 3px solid rgba(255,255,255,.35); border-top-color: #fff;
+    animation: spin .7s linear infinite; vertical-align: middle; margin-right: 2px;
+  }
+  @keyframes spin { to { transform: rotate(360deg); } }
+  @media (max-width: 900px) { .sidenav { display: none; } }
+</style>
+</head>
+<body>
+
+<div class="topbar">
+  <div class="hamburger" onclick="toggleSide()"><svg width="20" height="20" viewBox="0 0 24 24"><path fill="currentColor" d="M3 6h18v2H3zm0 5h18v2H3zm0 5h18v2H3z"/></svg></div>
+  <div class="cloud-logo">
+    <div class="gb6"><span>G</span><span>o</span><span>o</span><span>g</span><span>l</span><span>e</span></div>
+    <div class="txt"><b>Cloud Console</b><small>VM instances</small></div>
+  </div>
+  <div class="project">GitHub-Machine-Lab <span class="arrow">▾</span></div>
+  <div class="search"><svg width="16" height="16" viewBox="0 0 24 24"><path fill="currentColor" d="M15.5 14h-.79l-.28-.27a6.5 6.5 0 1 0-.7.7l.27.28v.79l5 4.99L20.49 19zm-6 0A4.5 4.5 0 1 1 14 9.5 4.5 4.5 0 0 1 9.5 14z"/></svg><span>Tìm VM, kết nối ZeroTier, ...</span></div>
+  <div class="top-right">
+    <div class="icon-btn" title="Enable APIs">🧪</div>
+    <div class="icon-btn" title="Cloud Shell">⌘</div>
+    <div class="icon-btn" title="Questions">?</div>
+    <div class="icon-btn dot" title="Notifications">🔔</div>
+    <div class="avatar" title="gaylo805-code">g</div>
+  </div>
+</div>
+
+<div class="layout">
+  <div class="sidenav" id="sidenav">
+    <a href="#" onclick="return navDemo(this)"><span class="ic">🏠</span> Dashboard</a>
+    <a href="#" onclick="return navDemo(this)"><span class="ic">⭐</span> Marketplace</a>
+    <div class="sec">Compute</div>
+    <a href="#" class="active" onclick="return navDemo(this)"><span class="ic">🖥️</span> VM instances</a>
+    <a href="#" onclick="return navDemo(this)"><span class="ic">🖼️</span> Machine images</a>
+    <a href="#" onclick="return navDemo(this)"><span class="ic">🧊</span> Disks</a>
+    <a href="#" onclick="return navDemo(this)"><span class="ic">🌐</span> Networks</a>
+    <div class="sec">CI / CD</div>
+    <a href="#" onclick="return navDemo(this)"><span class="ic">⚙️</span> Workflows</a>
+    <a href="#" onclick="return navDemo(this)"><span class="ic">🔁</span> Actions</a>
+    <a href="#" onclick="return navDemo(this)"><span class="ic">🗄️</span> Artifacts</a>
+    <div class="sec">Miscellaneous</div>
+    <a href="#" onclick="return navDemo(this)"><span class="ic">🔐</span> Security</a>
+    <a href="#" onclick="return navDemo(this)"><span class="ic">⚙️</span> Settings</a>
+  </div>
+
+  <div class="content">
+    <div class="crumb">Compute Engine &nbsp;›&nbsp; <b>VM instances</b></div>
+
+    <div class="banner" id="banner">
+      <span>🚀 Chào mừng! Máy ảo của bạn dùng <b>GitHub Actions</b> làm backend — không tốn phí, chạy 6 tiếng/lần.</span>
+      <span class="x" onclick="document.getElementById('banner').style.display='none'">✖</span>
+    </div>
+
+    <div class="head">
+      <h1>VM instances</h1>
+      <div class="actions">
+        <button class="btn sm" onclick="toast('Xuất báo cáo kết nối...')">⬇ Xuất</button>
+        <button class="btn sm" onclick="toast('Đang làm mới...')">🔄 Làm mới</button>
+        <button class="btn primary sm" id="btnCreate">＋ TẠO MÁY MỚI</button>
+      </div>
+    </div>
+
+    <div class="panel">
+      <div class="phead">
+        <span>✅ 1 instance</span>
+        <div class="ptools"><input style="border:1px solid var(--gray-400);border-radius:4px;padding:6px 10px;font-size:13px" placeholder="Lọc..." id="fsearch"></div>
+      </div>
+      <table>
+        <thead>
+          <tr>
+            <th>Name</th>
+            <th>Image</th>
+            <th>Host</th>
+            <th>ZeroTier IP</th>
+            <th>RDP</th>
+            <th>Status</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr class="row">
+            <td><span class="vmname" id="vmname" onclick="expandVm()">Đang tải...</span><br><span class="apps"><span class="app">Stop</span> <span class="app">Restart</span> <span class="app">Connect RDP</span></span></td>
+            <td><div>Windows Server 2022</div><small style="color:var(--gray-600)">GitHub Actions runner</small></td>
+            <td><span class="chip">windows-2022</span><br><small style="color:var(--gray-600)" id="runref">đang tải...</small></td>
+            <td><span class="mono num" id="vmip">10.147.20.42</span><br><small style="color:var(--gray-600)" id="nodeline">Node cd63e630b7 · net b103a835d2b3a8b0</small></td>
+            <td><span class="mono">3389</span><br><small style="color:var(--gray-600)">runneradmin / Runner@123456</small></td>
+            <td><span class="status-pill wait" id="stpill"><span class="bub"></span><small>Chờ IP ZeroTier</small></span></td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+
+    <div class="panel" id="detailPanel">
+      <div class="phead">
+        <span>🖥️ gh-runner-windows-004 — Chi tiết kết nối</span>
+        <div class="ptools"><button class="btn sm" onclick="copyConn()">📋 Sao chép</button></div>
+      </div>
+      <div class="det-grid">
+        <div class="key">Trạng thái</div>
+        <div class="valx"><span class="status-pill wait" id="stpill2"><span class="bub"></span><small>Đang chạy, chờ authorize node để nhận IP</small></span></div>
+        <div class="key">Node ZeroTier</div>
+        <div class="valx mono" id="detnode">...</div>
+        <div class="key">Network ZeroTier</div>
+        <div class="valx mono" id="detnet">...</div>
+        <div class="key">Nguồn máy chủ</div>
+        <div class="valx"><a id="runlink" href="#" target="_blank">đang tải...</a></div>
+        <div class="key">Giao diện mạng</div>
+        <div class="valx">
+          <div class="netif">
+            <div class="ni-h"><span>nic0</span> <span class="chip">ZeroTier One (RFC1918)</span></div>
+            <div class="ni-b">
+              <b>ZeroTier IP (Managed IP)</b><span class="mono num" id="detip">— chờ authorize —</span>
+              <b>Node ID</b><span class="mono num" id="detnode2">—</span>
+              <b>Username</b><span class="mono" id="detuser">—</span>
+              <b>Password</b><span class="mono" id="detpass">—</span>
+              <b>Port RDP</b><span class="mono num" id="detport">—</span>
+            </div>
+          </div>
+          <div class="hint">
+            Bước 1: Vào <b>my.zerotier.com</b> → authorize node <b>cd63e630b7</b> trong network <b>b103a835d2b3a8b0</b>.<br>
+            Bước 2: Sau khi authorize, IP ZeroTier sẽ hiện ở cột <b>Managed IP</b> trên my.zerotier.com — dùng IP đó để RDP.<br>
+            (Máy chạy tối đa 6 tiếng; khi hết giờ nhấn <b>Tạo máy mới</b> để tiếp tục.)
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<div id="toast"></div>
+
+<script>
+const btn=document.getElementById('btnCreate');
+let creating=false, polling=false;
+
+async function loadStatus(showToastMsg){
+  try{
+    const res=await fetch('/api/status');
+    if(!res.ok) throw new Error('Lỗi '+res.status);
+    const d=await res.json();
+    render(d);
+    if(showToastMsg && d.info){
+      toast('✅ Đã lấy máy thật: run #'+d.run_id);
+    } else if(showToastMsg && d.run_id){
+      toast('⏳ Máy đang khởi động... sẽ tự cập nhật khi có thông tin.');
+    } else {
+      toast('❌ Chưa có máy nào chạy — bấm Tạo máy mới.');
+    }
+  }catch(e){
+    toast('❌ Không kết nối được server local ('+e.message+')');
+  }
+}
+
+function render(d){
+  const info=d.info||{};
+  const node=info.node_id||'—';
+  const net=info.zerotier_net||'b103a835d2b3a8b0';
+  const ip=info.zt_ip||'';
+  const user=info.rdp_user||'runneradmin';
+  const pass=info.rdp_pass||'Runner@123456';
+  const port=info.rdp_port||3389;
+
+  document.getElementById('vmname').textContent= d.run_id? ('gh-runner-'+d.run_id) : '— chưa có máy —';
+  document.getElementById('runref').textContent= d.run_id? ('run #'+d.run_id) : '—';
+  if(d.run_url){
+    document.getElementById('runlink').href=d.run_url;
+    document.getElementById('runlink').textContent='GitHub Actions '+d.run_id+' ↗';
+  }
+  document.getElementById('vmip').textContent= ip || '— chờ authorize —';
+  document.getElementById('vmip').classList.toggle('ip-ready', !!ip);
+  document.getElementById('nodeline').textContent= 'Node '+node+' · net '+net;
+  document.getElementById('detip').textContent= ip || '— chờ authorize —';
+  document.getElementById('detnode').textContent= node;
+  document.getElementById('detnode2').textContent= node;
+  document.getElementById('detnet').textContent= net;
+  document.getElementById('detuser').textContent= user;
+  document.getElementById('detpass').textContent= pass;
+  document.getElementById('detport').textContent= port;
+  const running = ip ? 'running' : 'wait';
+  const label = ip ? 'RUNNING' : 'Chờ IP ZeroTier';
+  document.getElementById('stpill').className='status-pill '+running;
+  document.getElementById('stpill2').className='status-pill '+running;
+  document.getElementById('stpill').lastElementChild.textContent= label;
+  document.getElementById('stpill2').lastElementChild.textContent= ip? 'Đang chạy — kết nối RDP tới '+ip : 'Đang chạy, chờ authorize node để nhận IP';
+  window._conn={node,net,ip,user,pass,port};
+}
+
+function expandVm(){
+  document.getElementById('detailPanel').scrollIntoView({behavior:'smooth'});
+}
+function toggleSide(){ document.getElementById('sidenav').style.display = document.getElementById('sidenav').style.display==='none'?'block':'none'; }
+function navDemo(el){
+  document.querySelectorAll('.sidenav a').forEach(a=>a.classList.remove('active'));
+  el.classList.add('active');
+  toast('Demo: chưa cài module "'+el.textContent.trim()+'"');
+  return false;
+}
+document.getElementById('fsearch').addEventListener('input', e=>{
+  const q=e.target.value.toLowerCase();
+  document.querySelectorAll('tr.row').forEach(r=>{
+    r.style.display=r.textContent.toLowerCase().includes(q)?'':'none';
+  });
+});
+
+btn.addEventListener('click', async ()=>{
+  if(creating||polling) return;
+  creating=true;
+  const old=btn.innerHTML;
+  btn.innerHTML='<span class="spinner"></span> ĐANG TẠO...';
+  btn.disabled=true;
+  try{
+    const res=await fetch('/api/create',{method:'POST'});
+    const d=await res.json().catch(()=>({}));
+    if(d.ok){
+      toast('✅ Đã kích hoạt! Đang chờ máy khởi động ~3-5 phút...');
+      pollNewMachine();
+    } else {
+      toast('❌ '+(d.message||'Không tạo được máy'));
+    }
+  }catch(e){ toast('❌ '+e.message); }
+  finally{
+    creating=false;
+    btn.innerHTML=old; btn.disabled=false;
+  }
+});
+
+async function pollNewMachine(){
+  polling=true;
+  for(let i=0;i<60;i++){
+    await new Promise(r=>setTimeout(r,10000));
+    try{
+      const res=await fetch('/api/status');
+      const d=await res.json();
+      if(d.info){ render(d); toast('✅ Máy thật đã sẵn sàng! Xem thông tin kết nối bên dưới.'); polling=false; return; }
+      if([8,16,24,32].includes(i+1)) toast('⏳ Đang chờ máy '+(i+1)*10+'s...');
+    }catch(e){}
+  }
+  polling=false;
+  toast('⚠️ Hết giờ chờ — xem trạng thái tại tab Actions.');
+}
+
+function copyConn(){
+  if(!window._conn) return toast('Chưa có thông tin máy');
+  const c=window._conn;
+  const t=[`ZeroTier Net : ${c.net}`,`Node ID     : ${c.node}`,`ZeroTier IP : ${c.ip||'(chờ authorize)'}`,`Username     : ${c.user}`,`Password     : ${c.pass}`,`RDP Port     : ${c.port}`].join('\n');
+  (navigator.clipboard? navigator.clipboard.writeText(t): Promise.reject()).then(()=>toast('Đã sao chép thông tin kết nối')).catch(()=>toast('Không copy được'));
+}
+let tostimer;
+function toast(msg){
+  const el=document.getElementById('toast');
+  el.textContent=msg; el.classList.add('show');
+  clearTimeout(tostimer);
+  tostimer=setTimeout(()=>el.classList.remove('show'),5000);
+}
+
+loadStatus(false);
+</script>
+</body>
+</html>
