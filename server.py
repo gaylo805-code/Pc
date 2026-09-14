@@ -1,5 +1,13 @@
 #!/usr/bin/env python3
-"""Local server: serves the demo web + proxies GitHub API (dispatch & real machine info)."""
+"""Local server: serves the web UI + proxies GitHub API (dispatch & real machine info).
+
+Multi-account:
+  - Dùng file .accounts.json để khai báo danh sách tài khoản:
+      [ {"name": "gaylo805-code", "token": "ghp_..."},
+        {"name": "bot2",          "token": "ghp_..."} ]
+  - Nếu không có file, dùng token trong .token (tài khoản gaylo805-code).
+  - Repo của từng tài khoản: <account>/Pc (windows) và <account>/Cc (ubuntu).
+"""
 import io
 import json
 import os
@@ -11,24 +19,63 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 BASE = os.path.dirname(os.path.abspath(__file__))
 TOKEN_FILE = os.path.join(BASE, ".token")
+ACCOUNTS_FILE = os.path.join(BASE, ".accounts.json")
 
-TOKEN = os.environ.get("GITHUB_TOKEN", "")
-if not TOKEN and os.path.isfile(TOKEN_FILE):
-    with open(TOKEN_FILE) as f:
-        TOKEN = f.read().strip()
-if not TOKEN:
-    print("Thiếu token: đặt GITHUB_TOKEN hoặc tạo file .token", file=sys.stderr)
-    sys.exit(1)
-
-REPO = os.environ.get("REPO", "gaylo805-code/Pc")
-BRANCH = os.environ.get("BRANCH", "main")
-WORKFLOW = "main.yml"
 API = "https://api.github.com"
 
+TYPES = {
+    "windows": {
+        "repo_name": "Pc", "branch": "main", "workflow": "main.yml",
+        "label": "Windows 2022", "icon": "🖥️", "slot": "windows",
+    },
+    "ubuntu": {
+        "repo_name": "Cc", "branch": "main", "workflow": "main.yml",
+        "label": "Ubuntu 24.04", "icon": "🐧", "slot": "ssh",
+    },
+}
+DEFAULT_TYPE = "windows"
 
-def gh(method, path, body=None, raw=False):
+
+def _load_accounts():
+    if os.path.isfile(ACCOUNTS_FILE):
+        try:
+            with open(ACCOUNTS_FILE) as f:
+                arr = json.load(f)
+            accs = [{"name": a["name"], "token": a.get("token", "").strip()} for a in arr if a.get("name")]
+            if accs:
+                return accs
+        except Exception:
+            pass
+    tok = os.environ.get("GITHUB_TOKEN", "")
+    if not tok and os.path.isfile(TOKEN_FILE):
+        with open(TOKEN_FILE) as f:
+            tok = f.read().strip()
+    if not tok:
+        print("Thiếu token: đặt GITHUB_TOKEN, tạo file .token hoặc .accounts.json", file=sys.stderr)
+        sys.exit(1)
+    return [{"name": "gaylo805-code", "token": tok}]
+
+
+ACCOUNTS = _load_accounts()
+DEFAULT_ACC = ACCOUNTS[0]["name"]
+TOKEN = ACCOUNTS[0]["token"]
+
+
+def acc_token(acc):
+    for a in ACCOUNTS:
+        if a["name"] == acc:
+            return a["token"]
+    return TOKEN
+
+
+def acc_repo(cfg, acc):
+    return f"{acc}/{cfg['repo_name']}"
+
+
+def gh(method, path, body=None, raw=False, token=None):
+    tok = token or TOKEN
     req = urllib.request.Request(API + path, method=method)
-    req.add_header("Authorization", "Bearer " + TOKEN)
+    req.add_header("Authorization", "Bearer " + tok)
     req.add_header("Accept", "application/vnd.github+json")
     req.add_header("X-GitHub-Api-Version", "2022-11-28")
     if body is not None:
@@ -54,20 +101,18 @@ def gh(method, path, body=None, raw=False):
         return 0, {"message": str(e)}
 
 
-def latest_run():
-    st, runs = gh("GET", f"/repos/{REPO}/actions/workflows/{WORKFLOW}/runs?event=workflow_dispatch&per_page=5")
+def latest_run(cfg, acc):
+    repo = acc_repo(cfg, acc)
+    st, runs = gh("GET", f"/repos/{repo}/actions/workflows/{cfg['workflow']}/runs?event=workflow_dispatch&per_page=5", token=acc_token(acc))
     if st != 200 or not runs.get("workflow_runs"):
         return None, None
-    for r in runs["workflow_runs"]:
-        if r["status"] != "completed" or r.get("conclusion") != "success" or True:
-            return r["id"], r
-    return None, None
+    return runs["workflow_runs"][0]["id"], runs["workflow_runs"][0]
 
 
-def download_artifact(art_id):
-    url = f"{API}/repos/{REPO}/actions/artifacts/{art_id}/zip"
+def download_artifact(art_id, cfg, acc):
+    url = f"{API}/repos/{acc_repo(cfg, acc)}/actions/artifacts/{art_id}/zip"
     cmd = ["curl", "-sL", "-m", "120",
-           "-H", "Authorization: Bearer " + TOKEN,
+           "-H", "Authorization: Bearer " + acc_token(acc),
            "-H", "Accept: application/vnd.github+json", url]
     try:
         p = subprocess.run(cmd, capture_output=True, timeout=130)
@@ -78,14 +123,14 @@ def download_artifact(art_id):
     return 200, p.stdout
 
 
-def connect_info(run_id):
-    st, arts = gh("GET", f"/repos/{REPO}/actions/runs/{run_id}/artifacts")
+def connect_info(run_id, cfg, acc):
+    st, arts = gh("GET", f"/repos/{acc_repo(cfg, acc)}/actions/runs/{run_id}/artifacts", token=acc_token(acc))
     if st != 200:
         return None
     for a in arts.get("artifacts", []):
         if a["name"] == "connection-info":
             try:
-                st2, blob = download_artifact(a["id"])
+                st2, blob = download_artifact(a["id"], cfg, acc)
             except Exception:
                 continue
             if st2 == 200:
@@ -100,9 +145,9 @@ def connect_info(run_id):
     return None
 
 
-def live_info():
+def live_info(cfg, acc):
     try:
-        st, d = gh("GET", f"/repos/{REPO}/contents/connection.json?ref=runner-status")
+        st, d = gh("GET", f"/repos/{acc_repo(cfg, acc)}/contents/connection.json?ref=runner-status", token=acc_token(acc))
         if st != 200 or not d.get("content"):
             return None
         import base64
@@ -112,23 +157,120 @@ def live_info():
         return None
 
 
-def gather(run_id=None):
-    rid, r = latest_run()
+# --- Scan mạng ZeroTier ngay trên máy Ubuntu này để tìm IP thật của máy ---
+import ipaddress as _ipaddr
+import socket as _socket
+import time as _time
+from concurrent.futures import ThreadPoolExecutor as _TPE
+
+_SCAN = {"t": 0, "data": None}
+
+
+def _zt_prefix():
+    out = ""
+    for cmd in (["zerotier-cli", "listnetworks"], ["sudo", "zerotier-cli", "listnetworks"]):
+        try:
+            out = subprocess.run(cmd, capture_output=True, text=True, timeout=10).stdout
+            if out.strip():
+                break
+        except Exception:
+            out = ""
+    for ln in out.strip().splitlines()[1:]:
+        parts = ln.split()
+        if len(parts) >= 9 and parts[-1].count(".") == 3:
+            return parts[-1]
+    return None
+
+
+def _ping(ip):
+    try:
+        return subprocess.run(["ping", "-c1", "-W1", ip], capture_output=True, timeout=3).returncode == 0
+    except Exception:
+        return False
+
+
+def _port(ip, port):
+    try:
+        with _socket.create_connection((ip, port), timeout=1.2):
+            return True
+    except Exception:
+        return False
+
+
+def zt_scan(ttl=20):
+    now = _time.time()
+    if _SCAN["data"] and now - _SCAN["t"] < ttl:
+        return _SCAN["data"]
+    prefix = _zt_prefix()
+    result = {"prefix": prefix, "hosts": [], "windows": [], "ssh": []}
+    mine = set()
+    try:
+        out = subprocess.run(["hostname", "-I"], capture_output=True, text=True, timeout=5).stdout
+        mine.update(out.split())
+    except Exception:
+        pass
+    if prefix:
+        mine.add(prefix.split("/")[0])
+    if prefix:
+        try:
+            net = _ipaddr.ip_network(prefix, strict=False)
+            hosts = [str(h) for h in net.hosts() if str(h) not in mine]
+            with _TPE(max_workers=120) as ex:
+                ok = list(ex.map(_ping, hosts))
+            up = [h for h, alive in zip(hosts, ok) if alive]
+            with _TPE(max_workers=40) as ex:
+                rdp = list(ex.map(lambda ip: _port(ip, 3389), up))
+                ssh = list(ex.map(lambda ip: _port(ip, 22), up))
+            result["hosts"] = up
+            result["windows"] = [h for h, is_rdp in zip(up, rdp) if is_rdp]
+            result["ssh"] = [h for h, is_ssh in zip(up, ssh) if is_ssh]
+        except Exception:
+            pass
+    result["scan_at"] = _time.strftime("%H:%M:%S")
+    _SCAN["t"] = now
+    _SCAN["data"] = result
+    return result
+
+
+def gather(t=None, run_id=None, acc=None):
+    t = t if t in TYPES else DEFAULT_TYPE
+    acc = acc if a_name_exists(acc) else DEFAULT_ACC
+    cfg = TYPES[t]
+    rid, r = latest_run(cfg, acc)
     run_id = run_id or rid
-    artifact = connect_info(run_id) if run_id else None
-    live = live_info()
-    info = live if live else artifact
-    run_url = f"https://github.com/{REPO}/actions/runs/{run_id}" if run_id else None
+    active = r is not None and r["status"] in ("in_progress", "queued")
+    artifact = connect_info(run_id, cfg, acc) if active and run_id else None
+    live = live_info(cfg, acc) if active else None
+    info = (live if live else artifact) or {}
+    info = dict(info)
+
+    scan = zt_scan()
+    slot = cfg["slot"]
+    if scan.get(slot):
+        cand = scan[slot][0]
+        if not info.get("zt_ip"):
+            info["zt_ip"] = cand
+        info["discovered_by"] = "scan"
+
+    repo = acc_repo(cfg, acc)
+    run_url = f"https://github.com/{repo}/actions/runs/{run_id}" if run_id else None
     return {
-        "repo": REPO,
+        "type": t,
+        "account": acc,
+        "cfg": {"repo": repo, "label": cfg["label"], "icon": cfg["icon"], "slot": slot},
         "run_id": run_id,
         "run_url": run_url,
         "run_status": r["status"] if r else None,
         "run_conclusion": r.get("conclusion") if r else None,
-        "info": info,
+        "info": info or None,
         "artifact_found": artifact is not None,
         "live_found": live is not None,
+        "scan": scan,
     }
+
+
+def a_name_exists(acc):
+    return any(a["name"] == acc for a in ACCOUNTS)
 
 
 class Handler(BaseHTTPRequestHandler):
@@ -143,6 +285,11 @@ class Handler(BaseHTTPRequestHandler):
     def _no_route(self):
         self._json({"error": "Not found"}, 404)
 
+    def _qs(self):
+        import urllib.parse
+        q = self.path.split("?", 1)
+        return urllib.parse.parse_qs(q[1]) if len(q) > 1 else {}
+
     def do_OPTIONS(self):
         self.send_response(204)
         self.send_header("Access-Control-Allow-Origin", "*")
@@ -152,7 +299,7 @@ class Handler(BaseHTTPRequestHandler):
 
     def do_GET(self):
         path = self.path.split("?")[0]
-        if path == "/" or path == "/index.html":
+        if path in ("/", "/index.html"):
             try:
                 with open(os.path.join(BASE, "index.html"), "rb") as f:
                     data = f.read()
@@ -166,26 +313,52 @@ class Handler(BaseHTTPRequestHandler):
                 self._json({"error": "index.html chưa tồn tại"}, 404)
                 return
         if path == "/api/status":
-            import urllib.parse
-            qs = urllib.parse.parse_qs(self.path.split("?")[1] if "?" in self.path else "")
+            qs = self._qs()
+            t = qs.get("type", [DEFAULT_TYPE])[0]
+            acc = qs.get("account", [None])[0] or None
             run_id = qs.get("run_id", [None])[0]
-            if run_id:
-                try:
-                    run_id = int(run_id)
-                except ValueError:
-                    run_id = None
-            self._json(gather(run_id))
+            try:
+                run_id = int(run_id) if run_id else None
+            except ValueError:
+                run_id = None
+            self._json(gather(t, run_id, acc))
+            return
+        if path == "/api/types":
+            self._json({k: {"label": v["label"], "icon": v["icon"], "slot": v["slot"]} for k, v in TYPES.items()})
+            return
+        if path == "/api/accounts":
+            self._json([{"name": a["name"]} for a in ACCOUNTS])
             return
         self._no_route()
 
     def do_POST(self):
         path = self.path.split("?")[0]
         if path == "/api/create":
-            st, _ = gh("POST", f"/repos/{REPO}/actions/workflows/{WORKFLOW}/dispatches", body={"ref": BRANCH})
-            if st == 204:
-                self._json({"ok": True, "message": "Đã kích hoạt tạo máy", "run_url": f"https://github.com/{REPO}/actions"})
+            length = int(self.headers.get("Content-Length", 0))
+            if length:
+                try:
+                    body = json.loads(self.rfile.read(length) or b"{}")
+                except Exception:
+                    body = {}
             else:
-                self._json({"ok": False, "status": st, "message": "Dispatch thất bại"}, 500)
+                body = {}
+            t = body.get("type", DEFAULT_TYPE)
+            acc = body.get("account")
+            if not acc or not a_name_exists(acc):
+                self._json({"ok": False, "message": "Tài khoản không hợp lệ"}, 400)
+                return
+            cfg = TYPES.get(t)
+            if not cfg:
+                self._json({"ok": False, "message": f"Loại máy '{t}' không hợp lệ"}, 400)
+                return
+            repo = acc_repo(cfg, acc)
+            st, _ = gh("POST", f"/repos/{repo}/actions/workflows/{cfg['workflow']}/dispatches",
+                       body={"ref": cfg["branch"]}, token=acc_token(acc))
+            if st == 204:
+                self._json({"ok": True, "type": t, "account": acc, "message": "Đã kích hoạt tạo máy",
+                            "run_url": f"https://github.com/{repo}/actions"})
+            else:
+                self._json({"ok": False, "status": st, "message": "Dispatch thất bại (kiểm tra token/tên repo của tài khoản)"}, 500)
             return
         self._no_route()
 
@@ -197,7 +370,9 @@ def main():
     port = int(os.environ.get("PORT", 8080))
     srv = ThreadingHTTPServer(("0.0.0.0", port), Handler)
     print(f"🚀 Web + GitHub API: http://localhost:{port}")
-    print(f"   Repo: {REPO} | branch: {BRANCH} | workflow: {WORKFLOW}")
+    print(f"   Accounts: {', '.join(a['name'] for a in ACCOUNTS)}")
+    for k, cfg in TYPES.items():
+        print(f"   [{k}] {cfg['label']}")
     try:
         srv.serve_forever()
     except KeyboardInterrupt:
