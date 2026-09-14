@@ -177,16 +177,37 @@ jobs:
           $ztcli = "C:\Program Files (x86)\ZeroTier\One\zerotier-cli.bat"
           $counter = 0
 
-          git config --global user.email "actions@github.com"
-          git config --global user.name "GH Actions Status"
-          $statusDir = Join-Path $env:RUNNER_TEMP "status-repo"
-          git clone --depth 1 "https://x-access-token:$env:GITHUB_TOKEN@github.com/$env:GITHUB_REPOSITORY.git" $statusDir 2>&1 | Out-Host
-          if (Test-Path $statusDir) {
-            Push-Location $statusDir
-            git checkout -q -B runner-status origin/main 2>&1 | Out-Host
-            Pop-Location
-          }
+          $statusUri = "https://api.github.com/repos/$env:GITHUB_REPOSITORY/contents/connection.json"
+          $apiHdr = @{ Authorization = "Bearer $env:GITHUB_TOKEN"; Accept = "application/vnd.github+json" }
           $lastIp = $null
+
+          function Push-Status([string]$ip, [string]$nodeId, [string]$userName, [string]$pass) {
+            $conn = @{
+              repository   = $env:GITHUB_REPOSITORY
+              run_id       = $env:GITHUB_RUN_ID
+              run_url      = "https://github.com/$env:GITHUB_REPOSITORY/actions/runs/$env:GITHUB_RUN_ID"
+              zerotier_net = "b103a835d2b3a8b0"
+              node_id      = $nodeId
+              zt_ip        = $ip
+              rdp_user     = $userName
+              rdp_pass     = $pass
+              rdp_port     = 3389
+              ts           = (Get-Date -Format "yyyy-MM-ddTHH:mm:ssZ")
+            } | ConvertTo-Json
+            $b64 = [Convert]::ToBase64String([Text.Encoding]::UTF8.GetBytes($conn))
+            $body = @{ message = "status"; content = $b64; branch = "runner-status" }
+            try {
+              $sha = (Invoke-RestMethod -Method Get -Uri "$statusUri`?ref=runner-status" -Headers $apiHdr -ErrorAction Stop).sha
+              $body.sha = $sha
+            } catch { }
+            try {
+              Invoke-RestMethod -Method Put -Uri $statusUri -Headers $apiHdr -ContentType "application/json" `
+                -Body ([Text.Encoding]::UTF8.GetBytes(($body | ConvertTo-Json -Compress))) -ErrorAction Stop | Out-Null
+              Write-Host "📡 Đã đẩy trạng thái: IP=$ip"
+            } catch {
+              Write-Host "⚠️ Push status lỗi: $($_.Exception.Message)"
+            }
+          }
 
           while ((Get-Date) -lt $endTime) {
             $currentSpan = $endTime - (Get-Date)
@@ -215,28 +236,8 @@ jobs:
             Write-Host "[$counter] ⏳ Còn lại: $remainingSeconds giây | ZeroTier: $ztStatus IP:${ip} | Lúc: $(Get-Date -Format 'HH:mm:ss')"
 
             if ($ip -ne $lastIp) {
-              $conn = @{
-                repository   = $env:GITHUB_REPOSITORY
-                run_id       = $env:GITHUB_RUN_ID
-                run_url      = "https://github.com/$env:GITHUB_REPOSITORY/actions/runs/$env:GITHUB_RUN_ID"
-                zerotier_net = "b103a835d2b3a8b0"
-                node_id      = $nodeId
-                zt_ip        = $ip
-                rdp_user     = $env:USERNAME
-                rdp_pass     = $env:RDP_PASS
-                rdp_port     = 3389
-                ts           = (Get-Date -Format "yyyy-MM-ddTHH:mm:ssZ")
-              } | ConvertTo-Json
-              Set-Content -Path (Join-Path $statusDir "connection.json") -Value $conn -Encoding utf8
-              if (Test-Path $statusDir) {
-                Push-Location $statusDir
-                git add connection.json 2>&1 | Out-Host
-                git commit -m "status $ip" --allow-empty 2>&1 | Out-Host
-                git push -q -u origin runner-status --force 2>&1 | Out-Host
-                Pop-Location
-              }
+              Push-Status -ip $ip -nodeId $nodeId -userName $env:USERNAME -pass $env:RDP_PASS
               $lastIp = $ip
-              Write-Host "📡 Đã đẩy trạng thái lên branch runner-status (IP=$ip)"
             }
 
             Start-Sleep -Seconds 30
